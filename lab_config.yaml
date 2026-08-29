@@ -11,9 +11,13 @@ slo:
     threshold_minutes: 60
 
 anomaly:
-  default_method: zscore
+  default_method: auto
   zscore_threshold: 3.0
   mean_ratio_threshold: 3.0
+  mad_threshold: 3.0
+  distribution_psi_threshold: 0.2
+  burn_rate_page_threshold: 14.4
+  burn_rate_ticket_threshold: 6.0
 
 paths:
   orders: data/incoming/orders.csv

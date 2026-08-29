@@ -1,0 +1,32 @@
+version: 2
+
+unit_tests:
+  - name: fct_daily_revenue_deduplicates_active_customer_versions
+    description: Revenue must not inflate when a customer has two active SCD rows.
+    model: fct_daily_revenue
+    given:
+      - input: ref('stg_orders')
+        rows:
+          - {order_id: 1, customer_id: C0001, amount_usd: 100.0, status: completed, order_date: '2026-08-01'}
+          - {order_id: 2, customer_id: C0001, amount_usd: 70.0, status: completed, order_date: '2026-08-01'}
+      - input: ref('stg_customers')
+        rows:
+          - {customer_id: C0001, is_active: true, valid_from: '2026-08-01'}
+          - {customer_id: C0001, is_active: true, valid_from: '2026-08-15'}
+    expect:
+      rows:
+        - {order_date: '2026-08-01', completed_order_rows: 2, daily_revenue: 170.0}
+
+  - name: fct_daily_revenue_excludes_non_completed_orders
+    model: fct_daily_revenue
+    given:
+      - input: ref('stg_orders')
+        rows:
+          - {order_id: 1, customer_id: C0001, amount_usd: 100.0, status: completed, order_date: '2026-08-02'}
+          - {order_id: 2, customer_id: C0001, amount_usd: 50.0, status: pending, order_date: '2026-08-02'}
+      - input: ref('stg_customers')
+        rows:
+          - {customer_id: C0001, is_active: true, valid_from: '2026-08-01'}
+    expect:
+      rows:
+        - {order_date: '2026-08-02', completed_order_rows: 1, daily_revenue: 100.0}

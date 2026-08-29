@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: reset baseline tests gx dbt dashboard generate
+.PHONY: reset baseline tests adversarial tests-all gx dbt dashboard generate verify
 
 reset:
 	$(PYTHON) scripts/reset_lab.py
@@ -9,7 +9,12 @@ baseline:
 	$(PYTHON) scripts/run_baseline.py
 
 tests:
-	pytest tests_public -q
+	$(PYTHON) -m pytest tests_public -q
+
+adversarial:
+	$(PYTHON) -m pytest tests_adversarial -q
+
+tests-all: tests adversarial
 
 gx:
 	$(PYTHON) gx/validate_orders.py
@@ -23,3 +28,5 @@ dashboard:
 
 generate:
 	$(PYTHON) scripts/generate_data.py --rows 600 --days 42 --seed 27
+
+verify: reset baseline tests-all gx dbt

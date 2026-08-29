@@ -59,6 +59,11 @@ def main() -> None:
     metrics = ROOT / "reports" / "latest_metrics.json"
     if metrics.exists():
         metrics.unlink()
+    quarantine_dir = ROOT / "data" / "quarantine"
+    if quarantine_dir.exists():
+        for artifact in quarantine_dir.iterdir():
+            if artifact.is_file():
+                artifact.unlink()
     print("Lab reset to a healthy baseline.")
 
 

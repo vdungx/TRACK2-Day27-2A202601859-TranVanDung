@@ -11,6 +11,12 @@ models:
       - name: customer_id
         data_tests:
           - not_null
+      - name: amount_usd
+        data_tests:
+          - not_null
+      - name: order_date
+        data_tests:
+          - not_null
       - name: currency
         data_tests:
           - accepted_values:
@@ -25,5 +31,8 @@ models:
   - name: stg_customers
     columns:
       - name: customer_id
+        data_tests:
+          - not_null
+      - name: valid_from
         data_tests:
           - not_null

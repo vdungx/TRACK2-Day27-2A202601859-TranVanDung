@@ -3,6 +3,7 @@ owner: commerce-data
 freshness:
   column: updated_at
   max_delay_minutes: 30
+  static_fixture_grace_minutes: 1440
   severity: warning
 columns:
   order_id:

@@ -7,4 +7,7 @@ dbt_project/target/
 dbt_project/logs/
 dbt_project/dbt_packages/
 .streamlit/
+/data/quarantine/
+/reports/latest_metrics.json
+/dbt_project/.user.yml
 .DS_Store
