@@ -1,6 +1,7 @@
 """Distribution-drift signals without a heavyweight statistical dependency."""
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Iterable
 
 import numpy as np
@@ -126,12 +127,19 @@ def detect_distribution_shift(
                 f"current_invalid={current_invalid}; baseline_invalid={baseline_invalid}"
             ),
         }
-    if cur.size == 0 or base.size == 0:
+    if base.size == 0:
         return {
             "is_anomaly": False,
             "score": 0.0,
             "method": "ks_psi",
-            "reason": "empty_input",
+            "reason": "insufficient_baseline",
+        }
+    if cur.size == 0:
+        return {
+            "is_anomaly": True,
+            "score": float("inf"),
+            "method": "ks_psi",
+            "reason": "current_batch_empty",
         }
 
     ks = _ks_statistic(cur, base)
@@ -181,5 +189,65 @@ def detect_distribution_shift(
             f"baseline_spread={baseline_spread:.4f}; current_spread={current_spread:.4f}; "
             f"mean_ratio={mean_ratio:.3f}; mean_ratio_anomaly={mean_ratio_anomaly}; "
             f"legacy_ratio_threshold={ratio_threshold}"
+        ),
+    }
+
+
+def detect_categorical_shift(
+    current_values: Iterable[Any],
+    baseline_values: Iterable[Any],
+    *,
+    threshold: float = 0.25,
+) -> dict[str, Any]:
+    """Detect category-mix drift with total variation distance.
+
+    The metric is bounded in ``[0, 1]`` and remains meaningful when the
+    category means are identical. Empty current batches fail closed because
+    an absent population is not a healthy distribution.
+    """
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("threshold must be a finite number in [0, 1]") from exc
+    if not np.isfinite(threshold) or threshold < 0 or threshold > 1:
+        raise ValueError("threshold must be a finite number in [0, 1]")
+
+    try:
+        current = list(current_values)
+        baseline = list(baseline_values)
+    except TypeError:
+        current, baseline = [], []
+    if not baseline:
+        return {
+            "is_anomaly": False,
+            "score": 0.0,
+            "method": "categorical_tvd",
+            "reason": "insufficient_baseline",
+        }
+    if not current:
+        return {
+            "is_anomaly": True,
+            "score": 1.0,
+            "method": "categorical_tvd",
+            "reason": "current_batch_empty",
+        }
+
+    current_counts = Counter(map(str, current))
+    baseline_counts = Counter(map(str, baseline))
+    categories = sorted(set(current_counts) | set(baseline_counts))
+    score = 0.5 * sum(
+        abs(
+            current_counts[category] / len(current)
+            - baseline_counts[category] / len(baseline)
+        )
+        for category in categories
+    )
+    return {
+        "is_anomaly": bool(score >= threshold),
+        "score": float(score),
+        "method": "categorical_tvd",
+        "reason": (
+            f"total_variation_distance={score:.4f}; threshold={threshold}; "
+            f"categories={categories}"
         ),
     }

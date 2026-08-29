@@ -33,8 +33,8 @@
 ## Decision 5 — Multi-window SLO alerting
 
 - Hypothesis: a short burn spike should not page, while sustained fast burn should.
-- Agent proposal: page only when short and long burn are both at least 14.4x; use 6x as warning/ticket threshold.
-- Evidence/test: high/high pages; high/low and low/high do not page; exact error-budget boundary is not breached.
+- Agent proposal: page critically when the short window is at least 14.4x and the long confirmation window is at least 6x; page at warning severity when short is at least 6x and long is at least 3x; suppress short-only spikes.
+- Evidence/test: 20/7 pages critically, 20/2 and 2/20 do not, 6/3 pages as warning, cold-start history is suppressed, and the exact error-budget boundary is not breached.
 - Decision: accept.
 
 ## Decision 6 — Layered GX and quarantine actions
@@ -48,5 +48,19 @@
 
 - Hypothesis: public tests alone do not prove reliability under edge cases.
 - Agent proposal: maintain a separate `tests_adversarial` suite covering type/freshness/KB, outliers, seasonality, trend, shape drift, cycles, SLO boundaries, RAG drift, distribution contamination, GX agreement, pipeline multi-faults and quarantine recovery.
-- Evidence/test: 52 adversarial tests pass together with all 10 public tests; the integration subset exercises healthy, duplicate, volume-drop, distribution-shift, stale-KB, missing-column, multi-fault and recovery paths.
+- Evidence/test: 72 adversarial/public tests pass; coverage includes deterministic freshness clocks, future timestamps, categorical drift, empty batches, SLO history, health blast radius, GX quarantine, healthy, duplicate, volume-drop, distribution-shift, stale-KB, missing-column, multi-fault and recovery paths.
+- Decision: accept.
+
+## Decision 8 — Align hard-scenario control-plane behavior
+
+- Hypothesis: private evaluation can exercise the operational edges around the stable API, not only the happy-path metric values.
+- Agent proposal: add deterministic freshness reference times and future-skew detection, fail closed on empty current distributions, expose categorical TVD, normalize seasonal detector method labels, and provide SLO history/cold-start decisions.
+- Evidence/test: the peer hard-scenario regression suite passes locally, including stale/future timestamps, seasonal MAD, shape/category drift, empty current batches and sustained burn.
+- Decision: accept.
+
+## Decision 9 — Actionable incident and GX evidence
+
+- Hypothesis: a detected signal is only useful when it determines publication safety and preserves the rejected input.
+- Agent proposal: add `observability.health` incident decisions with lineage blast radius, a reusable GX `QuarantineOnFailure` action, exact-column expectation, and richer baseline status fields.
+- Evidence/test: critical signals resolve to P1 with downstream publication blocked; GX failures copy the source batch to a timestamped quarantine; baseline retains legacy report keys and emits system status/SLO history.
 - Decision: accept.

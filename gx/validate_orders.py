@@ -9,9 +9,11 @@ standard validation flow as well.
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -20,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 try:
     import great_expectations as gx
+    from great_expectations.checkpoint import ValidationAction
     from great_expectations.checkpoint.actions import UpdateDataDocsAction
 except ImportError as exc:  # friendlier classroom failure
     raise SystemExit(
@@ -27,6 +30,42 @@ except ImportError as exc:  # friendlier classroom failure
     ) from exc
 
 from src.contract_validator import failed_issues, load_contract, validate_dataframe
+
+
+class QuarantineOnFailure(ValidationAction):
+    """Persist the rejected source batch when a GX checkpoint fails.
+
+    The custom contract still decides whether a failure is a warning or a
+    hard block. This action only provides the durable GX-side evidence and is
+    intentionally reusable by instructor-side checks.
+    """
+
+    type: Literal["quarantine_on_critical_failure"] = "quarantine_on_critical_failure"
+    quarantine_dir: str
+    source_path: str
+
+    def run(self, checkpoint_result: Any, action_context: Any) -> dict[str, Any]:
+        del action_context
+        target = Path(self.quarantine_dir)
+        target.mkdir(parents=True, exist_ok=True)
+        failed = checkpoint_result.success is False
+        quarantine_path: Path | None = None
+        if failed:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            quarantine_path = target / f"orders-{stamp}.csv"
+            shutil.copy2(self.source_path, quarantine_path)
+        payload = {
+            "checkpoint_success": bool(checkpoint_result.success),
+            "action": "quarantine" if failed else "allow",
+            "reason": (
+                "orders_suite_failure" if failed else "all_suite_checks_passed"
+            ),
+            "quarantine_path": str(quarantine_path) if quarantine_path else None,
+        }
+        (target / "latest_gx_action.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        return payload
 
 
 def _severity_meta(severity: str) -> dict[str, str]:
@@ -51,6 +90,20 @@ def build_expectation_suite() -> gx.ExpectationSuite:
     critical = _severity_meta("critical")
     warning = _severity_meta("warning")
     expectations = [
+        gx.expectations.ExpectTableColumnsToMatchSet(
+            column_set=[
+                "order_id",
+                "customer_id",
+                "amount",
+                "currency",
+                "status",
+                "created_at",
+                "updated_at",
+            ],
+            exact_match=True,
+            severity="critical",
+            meta=critical,
+        ),
         gx.expectations.ExpectColumnValuesToNotBeNull(
             column="order_id", severity="critical", meta=critical
         ),

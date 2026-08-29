@@ -210,7 +210,36 @@ def detect_anomaly(
 
     global_values = _finite_array(history)
     segment_values = _context_segment(context)
-    values = segment_values if segment_values.size >= 3 else global_values
+    # A same-segment baseline is preferred, but the detector used for that
+    # baseline should reflect its sample size.  MAD is stable with at least
+    # five observations; with only three or four observations z-score is the
+    # transparent fallback and avoids over-interpreting a tiny MAD sample.
+    if segment_values.size >= 5:
+        result = mad_detector(
+            current,
+            segment_values,
+            threshold=max(effective_threshold, 3.5),
+        )
+        result["method"] = "auto:seasonal_mad"
+        result["reason"] += (
+            f"; baseline_source=same_segment_history; "
+            f"segment_size={segment_values.size}"
+        )
+        return result
+    if 3 <= segment_values.size < 5:
+        result = zscore_detector(
+            current,
+            segment_values,
+            threshold=effective_threshold,
+        )
+        result["method"] = "auto:seasonal_zscore"
+        result["reason"] += (
+            f"; baseline_source=same_segment_history; "
+            f"segment_size={segment_values.size}"
+        )
+        return result
+
+    values = global_values
     if values.size < 3:
         return {
             "is_anomaly": False,

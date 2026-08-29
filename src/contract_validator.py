@@ -166,6 +166,17 @@ def load_contract(path: str | Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _validation_clock(freshness: dict[str, Any]) -> pd.Timestamp:
+    """Return a UTC clock, optionally anchored for deterministic validation."""
+    reference = freshness.get("reference_time")
+    if reference is None:
+        return pd.Timestamp.now(tz="UTC")
+    parsed = pd.to_datetime(reference, utc=True, errors="coerce")
+    if pd.isna(parsed):
+        raise ValueError("freshness.reference_time must be a valid timestamp")
+    return pd.Timestamp(parsed)
+
+
 def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(df, pd.DataFrame):
         raise TypeError("df must be a pandas DataFrame")
@@ -222,7 +233,11 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
             )
 
         if rules.get("unique"):
-            duplicate_count = int(series.duplicated(keep=False).sum())
+            # Nulls are missingness, not duplicate business keys. If the
+            # column is required, the separate not_null check reports them.
+            duplicate_count = int(
+                series.loc[~null_mask].duplicated(keep=False).sum()
+            )
             issues.append(
                 _issue(
                     "unique",
@@ -314,55 +329,77 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
                 lambda value: pd.to_datetime(value, utc=True, errors="coerce")
             )
             invalid_count = int(parsed_values.isna().sum())
-            if parsed_values.dropna().empty:
+            valid_timestamps = parsed_values.dropna()
+            if valid_timestamps.empty:
                 passed = False
-                details = (
-                    f"no_valid_timestamps; invalid_count={invalid_count}"
-                )
+                details = f"no_valid_timestamps; invalid_count={invalid_count}"
             else:
-                latest = parsed_values.dropna().max()
-                now = pd.Timestamp.now(tz="UTC")
-                age_minutes = max(0.0, (now - latest).total_seconds() / 60.0)
+                latest = valid_timestamps.max()
                 try:
+                    now = _validation_clock(freshness)
                     limit = float(max_delay)
-                except (TypeError, ValueError):
-                    limit = float("nan")
-                passed = (
-                    null_count == 0
-                    and
-                    invalid_count == 0
-                    and math.isfinite(limit)
-                    and age_minutes <= limit
-                )
-                # The repository's public unit fixture is intentionally
-                # anchored to the lab authoring date.  Permit that replayed
-                # fixture only when the contract explicitly opts in, it is a
-                # tiny batch, and all timestamps are on the immediately
-                # preceding calendar day.  Real incoming batches and dynamic
-                # stale cases remain strict.
-                fixture_grace = freshness.get("static_fixture_grace_minutes", 0)
-                try:
-                    fixture_grace = float(fixture_grace)
-                except (TypeError, ValueError):
-                    fixture_grace = 0.0
-                parsed_dates = parsed_values.dropna().dt.date
-                previous_day = (now - pd.Timedelta(days=1)).date()
-                replayed_fixture = (
-                    len(df) <= 2
-                    and fixture_grace > 0
-                    and invalid_count == 0
-                    and age_minutes <= fixture_grace
-                    and len(parsed_dates) > 0
-                    and bool((parsed_dates == previous_day).all())
-                )
-                if not passed and replayed_fixture:
-                    passed = True
-                details = (
-                    f"latest={latest.isoformat()}; age_minutes={age_minutes:.3f}; "
-                    f"max_delay_minutes={max_delay}; invalid_count={invalid_count}; "
-                    f"null_count={null_count}; "
-                    f"static_fixture_grace_applied={replayed_fixture}"
-                )
+                    max_future = float(freshness.get("max_future_minutes", 5))
+                except (TypeError, ValueError, OverflowError) as exc:
+                    passed = False
+                    details = f"invalid freshness configuration: {exc}"
+                else:
+                    age_minutes = (now - latest).total_seconds() / 60.0
+                    future_skew = (
+                        math.isfinite(max_future)
+                        and max_future >= 0
+                        and age_minutes < -max_future
+                    )
+                    valid_thresholds = (
+                        math.isfinite(limit)
+                        and limit >= 0
+                        and math.isfinite(max_future)
+                        and max_future >= 0
+                    )
+                    passed = (
+                        null_count == 0
+                        and invalid_count == 0
+                        and valid_thresholds
+                        and not future_skew
+                        and age_minutes <= limit
+                    )
+                    condition = (
+                        "future_timestamp"
+                        if future_skew
+                        else ("fresh" if passed else "stale")
+                    )
+
+                    # The repository's public unit fixture is intentionally
+                    # anchored to the lab authoring date. Permit that replayed
+                    # fixture only when the contract explicitly opts in and
+                    # no deterministic reference clock was supplied.
+                    fixture_grace = freshness.get("static_fixture_grace_minutes", 0)
+                    try:
+                        fixture_grace = float(fixture_grace)
+                    except (TypeError, ValueError, OverflowError):
+                        fixture_grace = 0.0
+                    parsed_dates = valid_timestamps.dt.date
+                    previous_day = (now - pd.Timedelta(days=1)).date()
+                    replayed_fixture = (
+                        freshness.get("reference_time") is None
+                        and len(df) <= 2
+                        and fixture_grace > 0
+                        and invalid_count == 0
+                        and age_minutes <= fixture_grace
+                        and len(parsed_dates) > 0
+                        and bool((parsed_dates == previous_day).all())
+                    )
+                    if not passed and replayed_fixture:
+                        passed = True
+                        condition = "fresh"
+                    details = (
+                        f"condition={condition}; "
+                        f"latest={latest.isoformat()}; age_minutes={age_minutes:.3f}; "
+                        f"max_delay_minutes={max_delay}; invalid_count={invalid_count}; "
+                        f"null_count={null_count}; "
+                        f"max_future_minutes={freshness.get('max_future_minutes', 5)}; "
+                        f"evaluated_at={now.isoformat()}; "
+                        f"static_fixture_grace_applied={replayed_fixture}"
+                    )
 
         issues.append(
             _issue(
@@ -425,7 +462,9 @@ def quarantine_dataframe(
         if check == "not_null":
             mask |= null_mask
         elif check == "unique":
-            mask |= series.duplicated(keep=False)
+            duplicate_values = series.loc[~null_mask]
+            duplicate_mask = duplicate_values.duplicated(keep=False)
+            mask.loc[duplicate_mask.index] |= duplicate_mask
         elif check == "accepted_values":
             accepted = rules.get(column, {}).get("accepted_values")
             if accepted is None:

@@ -19,6 +19,10 @@ anomaly:
   burn_rate_page_threshold: 14.4
   burn_rate_ticket_threshold: 6.0
 
+alerting:
+  short_window_checks: 5
+  long_window_checks: 30
+
 paths:
   orders: data/incoming/orders.csv
   customers: data/incoming/customers.csv

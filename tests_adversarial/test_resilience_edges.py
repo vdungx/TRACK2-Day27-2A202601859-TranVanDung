@@ -171,14 +171,36 @@ def test_lineage_accepts_complete_graph_envelope():
 def test_slo_exact_budget_is_not_a_breach():
     result = slo_status(0.99, bad_events=1, total_events=100)
     assert result["actual_bad_rate"] == pytest.approx(result["allowed_bad_rate"])
-    assert result["burn_rate"] == pytest.approx(1)
+    assert result["burn_rate"] == 1.0
+    assert result["remaining_error_budget_fraction"] == 0.0
     assert result["breached"] is False
+
+
+def test_slo_common_decimal_burn_rate_is_exact():
+    result = slo_status(0.995, bad_events=2, total_events=100)
+    assert result["burn_rate"] == 4.0
+    assert result["remaining_error_budget_fraction"] == 0.0
 
 
 def test_multiwindow_requires_sustained_fast_burn_to_page():
     assert multiwindow_burn(20, 20)["page"] is True
+    assert multiwindow_burn(20, 10)["page"] is True
     assert multiwindow_burn(20, 2)["page"] is False
     assert multiwindow_burn(2, 20)["page"] is False
+
+
+def test_multiwindow_thresholds_are_inclusive_with_warning_and_critical_tiers():
+    critical = multiwindow_burn(14.4, 6.0)
+    assert critical["page"] is True
+    assert critical["severity"] == "critical"
+
+    warning_from_short = multiwindow_burn(14.399999, 6.0)
+    assert warning_from_short["page"] is True
+    assert warning_from_short["severity"] == "warning"
+
+    warning_from_long = multiwindow_burn(14.4, 5.999999)
+    assert warning_from_long["page"] is True
+    assert warning_from_long["severity"] == "warning"
 
 
 def test_rag_length_and_embedding_drift():

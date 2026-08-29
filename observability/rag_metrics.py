@@ -76,7 +76,8 @@ def detect_embedding_norm_shift(
         return {
             "is_anomaly": True,
             "score": float("inf"),
-            "method": "embedding_norm_robust",
+            "method": "embedding:embedding_norm_robust",
+            "metric": "embedding_norm_distribution",
             "reason": (
                 "invalid_numeric_input; "
                 f"current_invalid={current_invalid}; baseline_invalid={baseline_invalid}"
@@ -86,14 +87,16 @@ def detect_embedding_norm_shift(
         return {
             "is_anomaly": False,
             "score": 0.0,
-            "method": "embedding_norm_robust",
+            "method": "embedding:embedding_norm_robust",
+            "metric": "embedding_norm_distribution",
             "reason": "empty_input",
         }
     if bool((current < 0).any()) or bool((baseline < 0).any()):
         return {
             "is_anomaly": True,
             "score": float("inf"),
-            "method": "embedding_norm_robust",
+            "method": "embedding:embedding_norm_robust",
+            "metric": "embedding_norm_distribution",
             "reason": "negative_embedding_norm",
         }
 
@@ -119,7 +122,8 @@ def detect_embedding_norm_shift(
     return {
         "is_anomaly": bool(robust_score > 3.0 or relative_shift >= 0.20),
         "score": float(score),
-        "method": "embedding_norm_robust",
+        "method": "embedding:embedding_norm_robust",
+        "metric": "embedding_norm_distribution",
         "reason": (
             f"baseline_mean={baseline_mean:.6f}; baseline_median={baseline_median:.6f}; "
             f"current_mean={current_mean:.6f}; {scale_name}={scale:.6f}; "
