@@ -61,11 +61,21 @@ def _reference_date(history: pd.DataFrame) -> tuple[str, int]:
 
 
 def _history_segment(history: pd.DataFrame, column: str, day_of_week: int) -> list[float]:
+    if column not in history.columns:
+        return []
+    numeric = pd.to_numeric(history[column], errors="coerce")
     if "day_of_week" in history.columns:
-        segment = history.loc[history["day_of_week"] == day_of_week, column].dropna().tail(8)
+        segment = numeric.loc[history["day_of_week"] == day_of_week].dropna().tail(8)
         if len(segment) >= 3:
-            return segment.astype(float).tolist()
-    return history[column].dropna().tail(14).astype(float).tolist()
+            return segment.tolist()
+    return numeric.dropna().tail(14).tolist()
+
+
+def _column_values(df: pd.DataFrame, column: str) -> list[Any]:
+    """Return a metric column without crashing on a contract-level omission."""
+    if column not in df.columns:
+        return []
+    return df[column].tolist()
 
 
 def _action_for_failures(issues: list[dict[str, Any]]) -> str:
@@ -78,7 +88,11 @@ def _action_for_failures(issues: list[dict[str, Any]]) -> str:
 
 
 def _optional_embedding_signal(docs: list[dict[str, Any]], history: pd.DataFrame) -> dict[str, Any]:
-    current_norms = [doc["embedding_norm"] for doc in docs if "embedding_norm" in doc]
+    current_norms = [
+        doc["embedding_norm"]
+        for doc in docs
+        if isinstance(doc, dict) and "embedding_norm" in doc
+    ]
     if not current_norms or "embedding_norm_mean" not in history.columns:
         return {
             "is_anomaly": False,
@@ -124,12 +138,12 @@ def main() -> None:
     )
 
     amount_result = detect_distribution_shift(
-        orders["amount"].dropna().tolist(),
-        baseline_orders["amount"].dropna().tolist(),
+        _column_values(orders, "amount"),
+        _column_values(baseline_orders, "amount"),
     )
     text_result = detect_text_length_shift(
-        [str(doc.get("content", "")) for doc in docs],
-        history["mean_text_length"].dropna().tail(14).tolist(),
+        [doc.get("content", "") if isinstance(doc, dict) else "" for doc in docs],
+        history.get("mean_text_length", pd.Series(dtype=float)).dropna().tail(14).tolist(),
     )
     embedding_result = _optional_embedding_signal(docs, history)
 

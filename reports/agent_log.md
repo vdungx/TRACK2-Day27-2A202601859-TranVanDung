@@ -47,6 +47,6 @@
 ## Decision 7 — Adversarial verification
 
 - Hypothesis: public tests alone do not prove reliability under edge cases.
-- Agent proposal: maintain a separate `tests_adversarial` suite covering type/freshness/KB, outliers, seasonality, trend, shape drift, cycles, SLO boundaries, RAG drift and quarantine.
-- Evidence/test: 18 adversarial tests pass together with all 10 public tests.
+- Agent proposal: maintain a separate `tests_adversarial` suite covering type/freshness/KB, outliers, seasonality, trend, shape drift, cycles, SLO boundaries, RAG drift, distribution contamination, GX agreement, pipeline multi-faults and quarantine recovery.
+- Evidence/test: 52 adversarial tests pass together with all 10 public tests; the integration subset exercises healthy, duplicate, volume-drop, distribution-shift, stale-KB, missing-column, multi-fault and recovery paths.
 - Decision: accept.

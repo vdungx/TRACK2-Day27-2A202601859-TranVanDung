@@ -6,12 +6,26 @@ from typing import Any, Iterable
 import numpy as np
 
 
-def _finite_array(values: Iterable[float]) -> np.ndarray:
+def _coerce_finite(values: Iterable[float]) -> tuple[np.ndarray, int]:
+    """Coerce each observation independently and count invalid inputs."""
+
     try:
-        array = np.asarray(list(values), dtype=float)
-    except (TypeError, ValueError):
-        return np.asarray([], dtype=float)
-    return array[np.isfinite(array)]
+        raw_values = list(values)
+    except TypeError:
+        return np.asarray([], dtype=float), 0
+    finite: list[float] = []
+    invalid = 0
+    for value in raw_values:
+        try:
+            converted = float(value)
+        except (TypeError, ValueError, OverflowError):
+            invalid += 1
+            continue
+        if not np.isfinite(converted):
+            invalid += 1
+            continue
+        finite.append(converted)
+    return np.asarray(finite, dtype=float), invalid
 
 
 def _ks_statistic(current: np.ndarray, baseline: np.ndarray) -> float:
@@ -93,8 +107,25 @@ def detect_distribution_shift(
     uses distribution-aware thresholds and only falls back to the old mean
     ratio as a diagnostic in the returned reason.
     """
-    cur = _finite_array(current_values)
-    base = _finite_array(baseline_values)
+    try:
+        ratio_threshold = float(ratio_threshold)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ratio_threshold must be a positive finite number") from exc
+    if not np.isfinite(ratio_threshold) or ratio_threshold <= 0:
+        raise ValueError("ratio_threshold must be a positive finite number")
+
+    cur, current_invalid = _coerce_finite(current_values)
+    base, baseline_invalid = _coerce_finite(baseline_values)
+    if current_invalid or baseline_invalid:
+        return {
+            "is_anomaly": True,
+            "score": float("inf"),
+            "method": "ks_psi",
+            "reason": (
+                "invalid_numeric_input; "
+                f"current_invalid={current_invalid}; baseline_invalid={baseline_invalid}"
+            ),
+        }
     if cur.size == 0 or base.size == 0:
         return {
             "is_anomaly": False,

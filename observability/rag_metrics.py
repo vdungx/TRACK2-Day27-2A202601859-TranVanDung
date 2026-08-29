@@ -9,7 +9,14 @@ from observability.anomaly import detect_anomaly
 
 def approximate_token_lengths(texts: Iterable[str]) -> list[int]:
     # Deliberately simple proxy; no tokenizer/model download needed.
-    return [len(str(t).split()) for t in texts]
+    lengths: list[int] = []
+    for value in texts:
+        if value is None or value.__class__.__name__ in {"NAType", "NaTType"}:
+            value = ""
+        elif isinstance(value, (float, np.floating)) and not np.isfinite(value):
+            value = ""
+        lengths.append(len(str(value).split()))
+    return lengths
 
 
 def detect_text_length_shift(
@@ -32,12 +39,26 @@ def detect_text_length_shift(
     return result
 
 
-def _finite_array(values: Iterable[float]) -> np.ndarray:
+def _coerce_finite(values: Iterable[float]) -> tuple[np.ndarray, int]:
+    """Coerce norm observations independently and retain invalid-count evidence."""
+
     try:
-        array = np.asarray(list(values), dtype=float)
-    except (TypeError, ValueError):
-        return np.asarray([], dtype=float)
-    return array[np.isfinite(array)]
+        raw_values = list(values)
+    except TypeError:
+        return np.asarray([], dtype=float), 0
+    finite: list[float] = []
+    invalid = 0
+    for value in raw_values:
+        try:
+            converted = float(value)
+        except (TypeError, ValueError, OverflowError):
+            invalid += 1
+            continue
+        if not np.isfinite(converted):
+            invalid += 1
+            continue
+        finite.append(converted)
+    return np.asarray(finite, dtype=float), invalid
 
 
 def detect_embedding_norm_shift(
@@ -49,14 +70,31 @@ def detect_embedding_norm_shift(
     robust scale handles ordinary model noise while a relative-change guard
     still catches drift when the historical norms are constant.
     """
-    current = _finite_array(current_norms)
-    baseline = _finite_array(baseline_norms)
+    current, current_invalid = _coerce_finite(current_norms)
+    baseline, baseline_invalid = _coerce_finite(baseline_norms)
+    if current_invalid or baseline_invalid:
+        return {
+            "is_anomaly": True,
+            "score": float("inf"),
+            "method": "embedding_norm_robust",
+            "reason": (
+                "invalid_numeric_input; "
+                f"current_invalid={current_invalid}; baseline_invalid={baseline_invalid}"
+            ),
+        }
     if current.size == 0 or baseline.size == 0:
         return {
             "is_anomaly": False,
             "score": 0.0,
             "method": "embedding_norm_robust",
             "reason": "empty_input",
+        }
+    if bool((current < 0).any()) or bool((baseline < 0).any()):
+        return {
+            "is_anomaly": True,
+            "score": float("inf"),
+            "method": "embedding_norm_robust",
+            "reason": "negative_embedding_norm",
         }
 
     current_mean = float(np.mean(current))
@@ -71,7 +109,10 @@ def detect_embedding_norm_shift(
         scale_name = "std_scale"
 
     difference = abs(current_mean - baseline_median)
-    robust_score = difference / scale if scale > 0 else (0.0 if difference == 0 else float("inf"))
+    # A perfectly constant norm baseline has no empirical scale. Use the
+    # relative guard in that case instead of treating harmless floating-point
+    # noise as an infinite robust score.
+    robust_score = difference / scale if scale > 0 else 0.0
     denominator = max(abs(baseline_median), 1e-12)
     relative_shift = difference / denominator
     score = max(float(robust_score), float(relative_shift / 0.20))

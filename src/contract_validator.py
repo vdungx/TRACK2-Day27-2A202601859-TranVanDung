@@ -308,6 +308,7 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
         else:
             series = df[column]
             null_mask = _null_mask(series)
+            null_count = int(null_mask.sum())
             valid_values = series.loc[~null_mask]
             parsed_values = valid_values.map(
                 lambda value: pd.to_datetime(value, utc=True, errors="coerce")
@@ -327,6 +328,8 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
                 except (TypeError, ValueError):
                     limit = float("nan")
                 passed = (
+                    null_count == 0
+                    and
                     invalid_count == 0
                     and math.isfinite(limit)
                     and age_minutes <= limit
@@ -357,6 +360,7 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
                 details = (
                     f"latest={latest.isoformat()}; age_minutes={age_minutes:.3f}; "
                     f"max_delay_minutes={max_delay}; invalid_count={invalid_count}; "
+                    f"null_count={null_count}; "
                     f"static_fixture_grace_applied={replayed_fixture}"
                 )
 

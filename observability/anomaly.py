@@ -13,17 +13,27 @@ import numpy as np
 
 
 def _finite_array(values: Iterable[float]) -> np.ndarray:
+    """Coerce usable numeric observations without discarding the whole batch."""
+
     try:
-        array = np.asarray(list(values), dtype=float)
-    except (TypeError, ValueError):
+        raw_values = list(values)
+    except TypeError:
         return np.asarray([], dtype=float)
-    return array[np.isfinite(array)]
+    finite: list[float] = []
+    for value in raw_values:
+        try:
+            converted = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if np.isfinite(converted):
+            finite.append(converted)
+    return np.asarray(finite, dtype=float)
 
 
 def _invalid_current(current: float) -> bool:
     try:
         return not bool(np.isfinite(float(current)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return True
 
 
@@ -164,7 +174,7 @@ def detect_anomaly(
     history: Iterable[float],
     *,
     method: str = "auto",
-    threshold: float = 3.0,
+    threshold: float | None = None,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Detect a point anomaly while preserving the stable lab API.
@@ -175,13 +185,20 @@ def detect_anomaly(
     its threshold semantics.
     """
     if method == "mad":
-        # Preserve the explicit MAD detector's original 3.5 modified-z
-        # threshold; ``threshold`` is the auto/z-score knob.
-        return mad_detector(current, history)
+        # MAD has historically used 3.5, while an explicitly supplied
+        # threshold should still be honored by this lower-level API.
+        mad_threshold = 3.5 if threshold is None else threshold
+        return mad_detector(current, history, threshold=mad_threshold)
     if method == "zscore":
-        return zscore_detector(current, history, threshold=threshold)
+        zscore_threshold = 3.0 if threshold is None else threshold
+        return zscore_detector(current, history, threshold=zscore_threshold)
     if method != "auto":
         raise ValueError(f"Unsupported method: {method}")
+
+    effective_threshold = 3.0 if threshold is None else threshold
+
+    if _invalid_current(current):
+        return _invalid_result("auto:robust", "current_value_is_not_finite")
 
     if context and context.get("known_event"):
         return {
@@ -194,8 +211,6 @@ def detect_anomaly(
     global_values = _finite_array(history)
     segment_values = _context_segment(context)
     values = segment_values if segment_values.size >= 3 else global_values
-    if _invalid_current(current):
-        return _invalid_result("auto:robust", "current_value_is_not_finite")
     if values.size < 3:
         return {
             "is_anomaly": False,
@@ -216,8 +231,11 @@ def detect_anomaly(
     source = "same_segment_history" if segment_values.size >= 3 else "history"
     mad = float(np.median(np.abs(values - np.median(values))))
     return {
-        "is_anomaly": bool(score > threshold),
+        "is_anomaly": bool(score > effective_threshold),
         "score": float(score),
         "method": method_name if trend else ("auto:mad" if mad > 0 else "auto:robust"),
-        "reason": f"baseline_source={source}; {baseline}; threshold={threshold}{trend_note}",
+        "reason": (
+            f"baseline_source={source}; {baseline}; "
+            f"threshold={effective_threshold}{trend_note}"
+        ),
     }
